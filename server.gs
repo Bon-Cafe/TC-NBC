@@ -1,21 +1,52 @@
 
 /**
- * NBC PORTAL - Training Coordinator (Code.gs)
- * This handles all server-side operations.
+ * NBC PORTAL - Backend API (server.gs)
+ * 1. Paste this into a Google Apps Script.
+ * 2. Deploy as Web App (Execute as: Me, Access: Anyone).
+ * 3. Copy the Web App URL for use in the GitHub Frontend.
  */
 
 const DB_NAME = "NBC_Portal_Database";
 const UPLOADS_FOLDER = "NBC_Portal_Uploads";
 
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('index')
-    .setTitle('NBC Portal - Training Coordinator')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+// Handle GET requests (Initial data fetch)
+function doGet(e) {
+  try {
+    const data = getPortalData();
+    return ContentService.createTextOutput(JSON.stringify(data))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// Handle POST requests (Submissions & Schedules)
+function doPost(e) {
+  try {
+    const params = JSON.parse(e.postData.contents);
+    const action = params.action;
+    const data = params.payload;
+    
+    let result;
+    if (action === 'saveSubmission') {
+      result = saveSubmission(data);
+    } else if (action === 'saveSchedule') {
+      result = saveSchedule(data);
+    } else {
+      throw new Error("Invalid action: " + action);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 /**
- * DATABASE & FOLDER MANAGEMENT
+ * DATABASE LOGIC
  */
 function getOrCreateDatabase() {
   let ss;
@@ -40,34 +71,14 @@ function initSheets(ss) {
         sheet.appendRow(["ID", "Timestamp", "Date", "Assign To", "Accompanied By", "District", "Branches", "Purpose", "Approved By"]);
       } else if (tab === "DynamicQuestions") {
         sheet.appendRow(["Category", "ID", "Question Text", "Type", "Options (comma separated)"]);
-        // Seed initial questions
-        sheet.appendRow(["Branch Visit", "bv1", "Is the branch clean?", "radio", "Yes,No,N/A"]);
-        sheet.appendRow(["Branch Visit", "bv2", "Equipment Status", "dropdown", "Excellent,Good,Poor"]);
-        sheet.appendRow(["Employee Evaluation", "ee1", "Uniform Compliance", "radio", "Yes,No"]);
-        sheet.appendRow(["Employee Evaluation", "ee2", "Overall Score", "dropdown", "1,2,3,4,5"]);
-        sheet.appendRow(["Report Problem", "rp1", "Severity", "radio", "High,Medium,Low"]);
+        sheet.appendRow(["Branch Visit", "bv1", "Overall Cleanliness", "radio", "Excellent,Good,Fair,Poor"]);
+        sheet.appendRow(["Employee Evaluation", "ee1", "Punctuality Score", "dropdown", "5,4,3,2,1"]);
       }
     }
   });
-  const sheet1 = ss.getSheetByName("Sheet1");
-  if (sheet1) ss.deleteSheet(sheet1);
+  if (ss.getSheetByName("Sheet1")) ss.deleteSheet(ss.getSheetByName("Sheet1"));
 }
 
-function getOrCreateUploadsFolder() {
-  const folders = DriveApp.getFoldersByName(UPLOADS_FOLDER);
-  let folder;
-  if (folders.hasNext()) {
-    folder = folders.next();
-  } else {
-    folder = DriveApp.createFolder(UPLOADS_FOLDER);
-    folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  }
-  return folder;
-}
-
-/**
- * DATA STORAGE
- */
 function saveSubmission(data) {
   const ss = getOrCreateDatabase();
   const sheet = ss.getSheetByName("Submissions");
@@ -83,24 +94,12 @@ function saveSubmission(data) {
   }
 
   sheet.appendRow([
-    data.id,
-    data.timestamp,
-    data.category,
-    data.branchName,
-    data.supervisor,
-    data.areaManager,
-    data.district,
-    data.teamLeader,
-    JSON.stringify(data.employees),
-    JSON.stringify(data.responses),
-    imageUrl
+    data.id, data.timestamp, data.category, data.branchName, data.supervisor, 
+    data.areaManager, data.district, data.teamLeader, JSON.stringify(data.employees), 
+    JSON.stringify(data.responses), imageUrl
   ]);
 
-  try {
-    sendEmailReport(data, imageUrl);
-  } catch (e) {
-    console.error("Email failed: " + e.toString());
-  }
+  try { generateAndEmailPDF(data, imageUrl); } catch (e) {}
   return { success: true };
 }
 
@@ -108,97 +107,10 @@ function saveSchedule(data) {
   const ss = getOrCreateDatabase();
   const sheet = ss.getSheetByName("Schedules");
   sheet.appendRow([
-    data.id,
-    data.timestamp,
-    data.date,
-    data.assignTo,
-    data.accompaniedBy,
-    data.district,
-    data.branches.join(", "),
-    data.purpose,
-    data.approvedBy
+    data.id, data.timestamp, data.date, data.assignTo, data.accompaniedBy, 
+    data.district, data.branches.join(", "), data.purpose, data.approvedBy
   ]);
-
-  try {
-    sendScheduleEmail(data);
-  } catch (e) {
-    console.error("Email failed: " + e.toString());
-  }
   return { success: true };
-}
-
-/**
- * COMMUNICATION & PDF
- */
-function sendEmailReport(data, imageUrl) {
-  const pdfBlob = generatePDF(data, imageUrl);
-  const adminEmail = "ianianguro@gmail.com"; 
-  
-  MailApp.sendEmail({
-    to: adminEmail,
-    subject: `[NBC PORTAL] ${data.category} - ${data.branchName}`,
-    body: `Attached is the professional report for the ${data.category} conducted at ${data.branchName}.`,
-    attachments: [pdfBlob]
-  });
-}
-
-function sendScheduleEmail(data) {
-  const adminEmail = "ianianguro@gmail.com";
-  const ccs = "elmer@bon.com.sa";
-  
-  MailApp.sendEmail({
-    to: adminEmail,
-    cc: ccs,
-    subject: `[NBC SCHEDULE] New Visit: ${data.date}`,
-    body: `A new visit has been scheduled.\n\nDate: ${data.date}\nDistrict: ${data.district}\nBranches: ${data.branches.join(", ")}\nAssigned To: ${data.assignTo}`
-  });
-}
-
-function generatePDF(data, imageUrl) {
-  const html = `
-    <html>
-      <head>
-        <style>
-          @page { size: A4 portrait; margin: 0.25in; }
-          body { font-family: sans-serif; color: #333; font-size: 10pt; line-height: 1.4; margin: 0; }
-          .header { border-bottom: 4px solid #FF8C00; padding-bottom: 10px; margin-bottom: 20px; text-align: center; }
-          .logo { font-size: 28pt; font-weight: bold; color: #FF8C00; margin: 0; }
-          .report-header { background: #444; color: #fff; padding: 10px; text-align: center; font-size: 14pt; margin: 15px 0; border-radius: 4px; font-weight: bold; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-          th { background: #f2f2f2; text-align: left; padding: 8px; border: 1px solid #ddd; width: 35%; font-weight: bold; }
-          td { padding: 8px; border: 1px solid #ddd; }
-          .img-container { text-align: center; margin-top: 20px; border: 1px solid #eee; padding: 10px; }
-          .footer { position: fixed; bottom: 0; width: 100%; text-align: center; font-size: 8pt; color: #aaa; border-top: 1px solid #eee; padding-top: 5px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <p class="logo">BON CAFE</p>
-          <p style="text-transform:uppercase; letter-spacing: 2px; color: #666; font-weight: bold;">Professional Training Portal</p>
-        </div>
-        <div class="report-header">${data.category.toUpperCase()}</div>
-        <table>
-          <tr><th>Branch Name</th><td>${data.branchName}</td></tr>
-          <tr><th>District</th><td>${data.district}</td></tr>
-          <tr><th>Area Manager</th><td>${data.areaManager}</td></tr>
-          <tr><th>Supervisor</th><td>${data.supervisor}</td></tr>
-          <tr><th>Team Leader</th><td>${data.teamLeader}</td></tr>
-          <tr><th>Timestamp</th><td>${data.timestamp}</td></tr>
-        </table>
-        <h3 style="color: #FF8C00; border-bottom: 1px solid #eee;">Personnel Involved</h3>
-        <table>
-          <tr><th>Employees</th><td>${data.employees.map(e => `${e.name} (ID: ${e.id})`).join("<br/>")}</td></tr>
-        </table>
-        <h3 style="color: #FF8C00; border-bottom: 1px solid #eee;">Evaluation Responses</h3>
-        <table>
-          ${Object.entries(data.responses).map(([q, a]) => `<tr><th>${q}</th><td>${Array.isArray(a) ? a.join(", ") : a}</td></tr>`).join("")}
-        </table>
-        ${imageUrl ? `<div class="img-container"><strong>Image Evidence:</strong><br/><img src="${imageUrl}" style="max-width: 100%; max-height: 400px; margin-top: 10px;"/></div>` : ""}
-        <div class="footer">NBC PORTAL - TRAINING COORDINATOR | Confidential Document | BON Cafe © 2024</div>
-      </body>
-    </html>
-  `;
-  return HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(`${data.category}_Report.pdf`);
 }
 
 function getPortalData() {
@@ -207,4 +119,26 @@ function getPortalData() {
   const schedules = ss.getSheetByName("Schedules").getDataRange().getValues().slice(1);
   const questions = ss.getSheetByName("DynamicQuestions").getDataRange().getValues().slice(1);
   return { submissions, schedules, questions };
+}
+
+function getOrCreateUploadsFolder() {
+  const folders = DriveApp.getFoldersByName(UPLOADS_FOLDER);
+  let folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(UPLOADS_FOLDER);
+  folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return folder;
+}
+
+function generateAndEmailPDF(data, imageUrl) {
+  const html = `<html><body style="font-family: sans-serif;">
+    <h1 style="color:#FF8C00">NBC REPORT: ${data.category}</h1>
+    <p><strong>Branch:</strong> ${data.branchName}</p>
+    <p><strong>District:</strong> ${data.district}</p>
+    <p><strong>Coordinator:</strong> ${data.supervisor}</p>
+    <hr/>
+    <h3>Evaluation</h3>
+    ${Object.entries(data.responses).map(([k,v]) => `<p><strong>${k}:</strong> ${v}</p>`).join("")}
+    ${imageUrl ? `<img src="${imageUrl}" style="max-width:100%"/>` : ""}
+  </body></html>`;
+  const pdf = HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(`Report_${data.branchName}.pdf`);
+  MailApp.sendEmail("ianianguro@gmail.com", `NBC Portal Report: ${data.branchName}`, "See attached.", { attachments: [pdf] });
 }

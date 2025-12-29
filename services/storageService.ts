@@ -1,47 +1,47 @@
-import { FormSubmission, ScheduleEntry } from '../types';
 
-// Fix: Declare google global variable to resolve "Cannot find name 'google'" error in Google Apps Script environment
-declare const google: any;
+import { FormSubmission, ScheduleEntry, Category } from '../types';
 
 /**
- * Proxy function to handle google.script.run in development environments
- * and real GAS environments.
+ * Service to handle remote communication with Google Apps Script API
  */
-const callServer = (funcName: string, ...args: any[]): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    // Check if running inside Google Apps Script
-    if (typeof google !== 'undefined' && google.script && google.script.run) {
-      google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(reject)
-        [funcName](...args);
-    } else {
-      // Mock for local preview
-      console.warn(`Local Mock: Calling server function ${funcName}`, args);
-      setTimeout(() => {
-        if (funcName === 'getPortalData') {
-           resolve({ submissions: [], schedules: [] });
-        } else {
-           resolve({ success: true });
-        }
-      }, 1000);
-    }
-  });
+const getApiUrl = () => localStorage.getItem('nbc_api_url') || '';
+
+const callApi = async (action: string, payload?: any) => {
+  const url = getApiUrl();
+  if (!url) throw new Error("API URL not configured. Please go to settings.");
+
+  // For POST actions (Submissions & Schedules)
+  if (action === 'saveSubmission' || action === 'saveSchedule') {
+    // Note: Google Apps Script Web Apps require 'no-cors' for simple POSTs from different domains,
+    // which means we won't be able to read the response body, but the data will be sent.
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, payload })
+    });
+    return { success: true };
+  }
+
+  // For GET actions (Fetch all data)
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to fetch data from GAS");
+  return await response.json();
 };
 
 export const storageService = {
   saveSubmission: async (data: FormSubmission): Promise<void> => {
-    await callServer('saveSubmission', data);
+    await callApi('saveSubmission', data);
   },
 
   getSubmissions: async (): Promise<FormSubmission[]> => {
-    const data = await callServer('getPortalData');
-    // Map array back to objects if necessary, though here we assume UI handles it
-    // For simplicity, we'll return mock or formatted data
+    const data = await callApi('getPortalData');
+    if (!data || !data.submissions) return [];
+    
     return data.submissions.map((row: any[]) => ({
       id: row[0],
       timestamp: row[1],
-      category: row[2],
+      category: row[2] as Category,
       branchName: row[3],
       supervisor: row[4],
       areaManager: row[5],
@@ -54,11 +54,13 @@ export const storageService = {
   },
 
   saveSchedule: async (data: ScheduleEntry): Promise<void> => {
-    await callServer('saveSchedule', data);
+    await callApi('saveSchedule', data);
   },
 
   getSchedules: async (): Promise<ScheduleEntry[]> => {
-    const data = await callServer('getPortalData');
+    const data = await callApi('getPortalData');
+    if (!data || !data.schedules) return [];
+
     return data.schedules.map((row: any[]) => ({
       id: row[0],
       timestamp: row[1],
@@ -66,7 +68,7 @@ export const storageService = {
       assignTo: row[3],
       accompaniedBy: row[4],
       district: row[5],
-      branches: row[6].split(", "),
+      branches: (row[6] || "").split(", "),
       purpose: row[7],
       approvedBy: row[8]
     }));
