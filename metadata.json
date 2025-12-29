@@ -1,0 +1,7 @@
+{
+  "name": "NBC PORTAL - Training Coordinator",
+  "description": "A comprehensive portal for New Bon Cafe training coordinators to manage branch visits, employee evaluations, problem reporting, and scheduling with Google Sheets integration and automated reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

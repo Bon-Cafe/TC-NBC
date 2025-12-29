@@ -1,0 +1,561 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>NBC Portal - Training Coordinator</title>
+  
+  <!-- CDNs for UMD Globals -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/react-router-dom@6.11.2/dist/umd/react-router-dom.production.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    body { font-family: 'Inter', sans-serif; background-color: #f9fafb; }
+    .orange-bg { background-color: #FF8C00; }
+    .orange-text { color: #FF8C00; }
+    .border-orange { border-color: #FF8C00; }
+    .animate-in { animation: fadeIn 0.3s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .hide-scroll::-webkit-scrollbar { width: 5px; }
+    .hide-scroll::-webkit-scrollbar-thumb { background: #FF8C00; border-radius: 10px; }
+    .two-tone-login {
+      background: linear-gradient(to bottom, #FF8C00 50%, #f3f4f6 50%);
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@heroicons/react/": "https://esm.sh/@heroicons/react@^2.2.0/",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.11.0"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+    const { HashRouter, Routes, Route, Link, useNavigate, useLocation, Navigate } = ReactRouterDOM;
+
+    // --- CONFIG & CONSTANTS ---
+    const Category = {
+      BranchVisit: 'Branch Visit',
+      EmployeeEvaluation: 'Employee Evaluation',
+      ReportProblem: 'Report Problem',
+      Schedule: 'Schedule',
+      Dashboard: 'Dashboard'
+    };
+
+    const BRANCHES = ['NBC Riyadh Main', 'NBC Jeddah Central', 'NBC Dammam Coast', 'NBC Al Khobar', 'NBC Mecca South', 'NBC Medina North', 'NBC Jubail', 'NBC Abha'];
+    const SUPERVISORS = ['Ahmed Ali', 'Sarah Khan', 'Omar Hassan', 'Fatima Zahra', 'TC-Sufyan', 'TC-Elmer'];
+    const AREA_MANAGERS = { 'Khalid Ibrahim': 'Central', 'Mariam Saeed': 'Western', 'Yousef Saleh': 'Eastern', 'Noura Ahmad': 'Southern' };
+    const TEAM_LEADERS = ['TL-01 Samer', 'TL-02 Laila', 'TL-03 Kareem', 'TL-04 Hana'];
+    const DISTRICTS = ['Central', 'Western', 'Eastern', 'Southern'];
+
+    // --- SERVER COMMUNICATION ---
+    const callServer = (func, ...args) => {
+      return new Promise((resolve, reject) => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            [func](...args);
+        } else {
+          console.warn("MOCK SERVER: " + func, args);
+          setTimeout(() => {
+            if (func === 'getPortalData') resolve({ submissions: [], schedules: [], questions: [] });
+            else resolve({ success: true });
+          }, 800);
+        }
+      });
+    };
+
+    // --- SHARED COMPONENTS ---
+
+    const SearchableSelect = ({ label, options, value, onChange, placeholder = "Select..." }) => {
+      const [isOpen, setIsOpen] = useState(false);
+      const [search, setSearch] = useState("");
+      const dropdownRef = useRef(null);
+
+      const filtered = options.filter(o => o.toLowerCase().includes(search.toLowerCase()));
+
+      useEffect(() => {
+        const handleClick = (e) => {
+          if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setIsOpen(false);
+        };
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+      }, []);
+
+      return (
+        <div className="mb-4 relative" ref={dropdownRef}>
+          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{label}</label>
+          <div 
+            onClick={() => setIsOpen(!isOpen)}
+            className="w-full bg-white border border-gray-300 rounded-xl px-4 py-3 flex justify-between items-center cursor-pointer hover:border-orange-400 transition-all"
+          >
+            <span className={value ? "text-gray-900 font-medium" : "text-gray-400"}>{value || placeholder}</span>
+            <i className={`fa-solid fa-chevron-down text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`}></i>
+          </div>
+          {isOpen && (
+            <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden animate-in">
+              <div className="p-2 border-b bg-gray-50">
+                <input 
+                  autoFocus
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-orange-500"
+                  placeholder="Type to filter..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+              <ul className="max-h-48 overflow-y-auto hide-scroll">
+                {filtered.map(opt => (
+                  <li 
+                    key={opt}
+                    onClick={() => { onChange(opt); setIsOpen(false); }}
+                    className="px-4 py-3 text-sm hover:bg-orange-50 cursor-pointer font-medium border-b border-gray-50 last:border-none"
+                  >
+                    {opt}
+                  </li>
+                ))}
+                {filtered.length === 0 && <li className="px-4 py-3 text-sm text-gray-400">No matches</li>}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const EmployeeList = ({ employees, setEmployees }) => {
+      const add = () => setEmployees([...employees, { name: '', id: '' }]);
+      const rem = (i) => setEmployees(employees.filter((_, idx) => idx !== i));
+      const up = (i, f, v) => {
+        const next = [...employees];
+        next[i][f] = v;
+        setEmployees(next);
+      };
+
+      return (
+        <div className="mb-6">
+          <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Employees in Charge</label>
+          <div className="space-y-2">
+            {employees.map((emp, i) => (
+              <div key={i} className="flex gap-2 animate-in">
+                <input required className="flex-1 px-4 py-2 border rounded-lg text-sm outline-none focus:border-orange-400" placeholder="Name" value={emp.name} onChange={e => up(i, 'name', e.target.value)} />
+                <input required className="w-24 px-4 py-2 border rounded-lg text-sm outline-none focus:border-orange-400" placeholder="ID" value={emp.id} onChange={e => up(i, 'id', e.target.value)} />
+                {employees.length > 1 && <button type="button" onClick={() => rem(i)} className="p-2 text-red-500"><i className="fa-solid fa-circle-xmark"></i></button>}
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={add} className="mt-3 flex items-center gap-2 text-sm font-bold orange-text"><i className="fa-solid fa-plus-circle"></i> Add Employee</button>
+        </div>
+      );
+    };
+
+    // --- VIEWS ---
+
+    const GenericForm = ({ category }) => {
+      const [form, setForm] = useState({ branch: '', supervisor: '', am: '', district: '', tl: '', employees: [{ name: '', id: '' }], responses: {}, image: null });
+      const [questions, setQuestions] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [submitting, setSubmitting] = useState(false);
+      const [done, setDone] = useState(false);
+      const fileRef = useRef();
+
+      useEffect(() => {
+        callServer('getPortalData').then(res => {
+          const catQs = res.questions.filter(q => q[0] === category);
+          setQuestions(catQs.map(q => ({ id: q[1], text: q[2], type: q[3], options: q[4] ? q[4].split(",") : [] })));
+          setLoading(false);
+        });
+      }, [category]);
+
+      useEffect(() => {
+        if (form.am) setForm(p => ({ ...p, district: AREA_MANAGERS[form.am] || '' }));
+      }, [form.am]);
+
+      const submit = async (e) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+          await callServer('saveSubmission', {
+            ...form,
+            branchName: form.branch,
+            areaManager: form.am,
+            teamLeader: form.tl,
+            id: Date.now().toString(36),
+            timestamp: new Date().toLocaleString(),
+            category
+          });
+          setDone(true);
+        } catch (err) { alert(err); } finally { setSubmitting(false); }
+      };
+
+      if (done) return (
+        <div className="max-w-lg mx-auto mt-12 p-10 bg-white rounded-3xl shadow-xl text-center animate-in">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <i className="fa-solid fa-check-double text-4xl text-green-600"></i>
+          </div>
+          <h2 className="text-2xl font-black mb-2 text-gray-800">Submitted!</h2>
+          <p className="text-gray-500 mb-8">Data saved to sheet and report emailed to admin.</p>
+          <button onClick={() => window.location.reload()} className="w-full py-4 orange-bg text-white font-bold rounded-xl shadow-lg">Create New Form</button>
+        </div>
+      );
+
+      return (
+        <div className="max-w-2xl mx-auto py-8 px-4 animate-in">
+          <h1 className="text-2xl font-black text-gray-800 mb-6">{category} Form</h1>
+          <form onSubmit={submit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-2">
+            <SearchableSelect label="Branch Name" options={BRANCHES} value={form.branch} onChange={v => setForm(p => ({ ...p, branch: v }))} />
+            <SearchableSelect label="Supervisor" options={SUPERVISORS} value={form.supervisor} onChange={v => setForm(p => ({ ...p, supervisor: v }))} />
+            <SearchableSelect label="Area Manager" options={Object.keys(AREA_MANAGERS)} value={form.am} onChange={v => setForm(p => ({ ...p, am: v }))} />
+            
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">District (Auto-Fill)</label>
+              <input readOnly className="w-full bg-gray-50 border rounded-xl px-4 py-3 text-gray-400 outline-none" value={form.district || "Select AM..."} />
+            </div>
+
+            <SearchableSelect label="Team Leader" options={TEAM_LEADERS} value={form.tl} onChange={v => setForm(p => ({ ...p, tl: v }))} />
+            
+            <EmployeeList employees={form.employees} setEmployees={v => setForm(p => ({ ...p, employees: v }))} />
+
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-black mb-6 text-gray-800">Evaluations</h3>
+              {loading ? <p className="text-center text-gray-400 py-4"><i className="fa-solid fa-spinner animate-spin mr-2"></i>Loading questions...</p> : 
+                questions.map(q => (
+                  <div key={q.id} className="mb-8">
+                    <label className="block text-sm font-bold text-gray-700 mb-3">{q.text}</label>
+                    {q.type === 'radio' && (
+                      <div className="flex flex-wrap gap-6">
+                        {q.options.map(opt => (
+                          <label key={opt} className="flex items-center gap-2 cursor-pointer group">
+                            <input required type="radio" name={q.id} className="w-5 h-5 accent-orange-500" onChange={() => setForm(p => ({ ...p, responses: { ...p.responses, [q.text]: opt } }))} />
+                            <span className="group-hover:text-orange-600 transition-colors">{opt}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === 'dropdown' && (
+                      <select required className="w-full p-3 border rounded-xl bg-white outline-none focus:border-orange-500" onChange={e => setForm(p => ({ ...p, responses: { ...p.responses, [q.text]: e.target.value } }))}>
+                        <option value="">Choose Option</option>
+                        {q.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                    )}
+                    {q.type === 'text' && (
+                      <textarea required className="w-full p-4 border rounded-xl outline-none focus:border-orange-500" rows="3" placeholder="Enter details..." onChange={e => setForm(p => ({ ...p, responses: { ...p.responses, [q.text]: e.target.value } }))}></textarea>
+                    )}
+                  </div>
+                ))
+              }
+            </div>
+
+            <div className="mb-8">
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-3">Evidence Photo</label>
+              <div onClick={() => fileRef.current.click()} className="border-2 border-dashed border-gray-200 rounded-3xl p-8 text-center cursor-pointer hover:bg-gray-50 hover:border-orange-200 transition-all">
+                {form.image ? (
+                  <div className="relative inline-block">
+                    <img src={form.image} className="max-h-56 rounded-2xl shadow-xl" />
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setForm(p => ({ ...p, image: null })); }} className="absolute -top-3 -right-3 w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center border-4 border-white shadow-md"><i className="fa-solid fa-x"></i></button>
+                  </div>
+                ) : (
+                  <div className="text-gray-300">
+                    <i className="fa-solid fa-camera-retro text-5xl mb-3"></i>
+                    <p className="text-sm font-bold text-gray-400 uppercase">Capture or Upload</p>
+                  </div>
+                )}
+                <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => {
+                  const f = e.target.files[0];
+                  if (f) { const r = new FileReader(); r.onload = ev => setForm(p => ({ ...p, image: ev.target.result })); r.readAsDataURL(f); }
+                }} />
+              </div>
+            </div>
+
+            <button disabled={submitting} className="w-full py-5 orange-bg text-white font-black rounded-2xl shadow-2xl shadow-orange-100 flex items-center justify-center gap-4 active:scale-95 transition-all disabled:bg-gray-400">
+              {submitting ? <i className="fa-solid fa-circle-notch animate-spin"></i> : <i className="fa-solid fa-paper-plane"></i>}
+              {submitting ? 'PROCESSING REPORT...' : 'SUBMIT FORM'}
+            </button>
+          </form>
+        </div>
+      );
+    };
+
+    const ScheduleView = () => {
+      const [form, setForm] = useState({ date: '', assignTo: '', accompaniedBy: '', district: '', branches: [''], purpose: '' });
+      const [submitting, setSubmitting] = useState(false);
+      const [done, setDone] = useState(false);
+
+      const addBranch = () => setForm(p => ({ ...p, branches: [...p.branches, ''] }));
+      const remBranch = (i) => setForm(p => ({ ...p, branches: p.branches.filter((_, idx) => idx !== i) }));
+      const upBranch = (i, v) => {
+        const next = [...form.branches];
+        next[i] = v;
+        setForm(p => ({ ...p, branches: next }));
+      };
+
+      const submit = async (e) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+          await callServer('saveSchedule', { ...form, id: Date.now().toString(36), timestamp: new Date().toLocaleString(), approvedBy: 'Mr. Mohammad Aldos' });
+          setDone(true);
+        } catch (err) { alert(err); } finally { setSubmitting(false); }
+      };
+
+      if (done) return (
+        <div className="max-w-lg mx-auto mt-12 p-10 bg-white rounded-3xl shadow-xl text-center">
+          <i className="fa-solid fa-calendar-check text-6xl text-orange-500 mb-6"></i>
+          <h2 className="text-2xl font-black mb-2">Scheduled!</h2>
+          <p className="text-gray-500 mb-8">Schedule is active and notifications were sent.</p>
+          <button onClick={() => window.location.reload()} className="w-full py-4 orange-bg text-white font-bold rounded-xl">Main Menu</button>
+        </div>
+      );
+
+      return (
+        <div className="max-w-2xl mx-auto py-8 px-4 animate-in">
+          <h1 className="text-2xl font-black text-gray-800 mb-6">Create Visit Schedule</h1>
+          <form onSubmit={submit} className="bg-white rounded-2xl p-8 border shadow-sm space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Date of Visit</label>
+                <input required type="date" className="w-full border p-3 rounded-xl outline-none" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
+              </div>
+              <SearchableSelect label="Assign To" options={['TC-Sufyan', 'TC-Elmer']} value={form.assignTo} onChange={v => setForm(p => ({ ...p, assignTo: v }))} />
+            </div>
+            
+            <SearchableSelect label="Accompanied By" options={['FTS-Hashim Toba', 'FTS-Mohammad Ali Mubarak']} value={form.accompaniedBy} onChange={v => setForm(p => ({ ...p, accompaniedBy: v }))} />
+            
+            <SearchableSelect label="District" options={DISTRICTS} value={form.district} onChange={v => setForm(p => ({ ...p, district: v }))} />
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Branches to Visit</label>
+              {form.branches.map((b, i) => (
+                <div key={i} className="flex gap-2 mb-2 animate-in">
+                  <select required className="flex-1 p-3 border rounded-xl bg-white outline-none" value={b} onChange={e => upBranch(i, e.target.value)}>
+                    <option value="">Select Branch</option>
+                    {BRANCHES.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                  {form.branches.length > 1 && <button type="button" onClick={() => remBranch(i)} className="text-red-500 px-3"><i className="fa-solid fa-trash"></i></button>}
+                </div>
+              ))}
+              <button type="button" onClick={addBranch} className="text-sm font-bold orange-text mt-2"><i className="fa-solid fa-plus-circle"></i> Add More Branches</button>
+            </div>
+
+            <textarea required className="w-full border p-4 rounded-xl outline-none focus:border-orange-400" placeholder="Purpose of visits..." rows="3" value={form.purpose} onChange={e => setForm(p => ({ ...p, purpose: e.target.value }))}></textarea>
+
+            <div className="bg-gray-50 p-6 rounded-2xl text-center border-2 border-dashed border-gray-200">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">System Approval Verified</p>
+              <p className="font-black text-gray-800 border-b-2 border-orange-200 pb-1 inline-block px-4">Mr. Mohammad Aldos</p>
+              <p className="text-[10px] text-gray-500 mt-2 font-bold">Executive Director, Division Operations</p>
+            </div>
+
+            <button disabled={submitting} className="w-full py-5 orange-bg text-white font-black rounded-2xl shadow-xl">SUBMIT SCHEDULE</button>
+          </form>
+        </div>
+      );
+    };
+
+    const DashboardView = () => {
+      const [data, setData] = useState({ submissions: [], schedules: [] });
+      const [view, setView] = useState('Submissions');
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        callServer('getPortalData').then(res => {
+          setData(res);
+          setLoading(false);
+        });
+      }, []);
+
+      if (loading) return <div className="flex flex-col items-center justify-center p-20 animate-in"><i className="fa-solid fa-circle-notch animate-spin text-5xl orange-text mb-4"></i><p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Syncing with Sheet...</p></div>;
+
+      return (
+        <div className="max-w-4xl mx-auto py-8 px-4 animate-in">
+          <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4">
+            <h1 className="text-2xl font-black text-gray-800">Portal History</h1>
+            <div className="flex bg-white rounded-xl p-1 shadow-sm border">
+              <button onClick={() => setView('Submissions')} className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${view === 'Submissions' ? 'orange-bg text-white' : 'text-gray-400'}`}>Form Reports</button>
+              <button onClick={() => setView('Schedules')} className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${view === 'Schedules' ? 'orange-bg text-white' : 'text-gray-400'}`}>Visits</button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  {view === 'Submissions' ? (
+                    <tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Category</th><th className="px-6 py-4">Branch</th><th className="px-6 py-4">Status</th></tr>
+                  ) : (
+                    <tr><th className="px-6 py-4">Visit Date</th><th className="px-6 py-4">District</th><th className="px-6 py-4">Branches</th><th className="px-6 py-4">Assigned</th></tr>
+                  )}
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {view === 'Submissions' ? data.submissions.map((row, i) => (
+                    <tr key={i} className="hover:bg-orange-50/30 transition-colors">
+                      <td className="px-6 py-4 text-sm">{row[1].split(",")[0]}</td>
+                      <td className="px-6 py-4 text-sm font-bold">{row[2]}</td>
+                      <td className="px-6 py-4 text-sm">{row[3]}</td>
+                      <td className="px-6 py-4"><span className="bg-green-100 text-green-700 text-[10px] px-2 py-1 rounded-full font-black uppercase">Sent to Admin</span></td>
+                    </tr>
+                  )) : data.schedules.map((row, i) => (
+                    <tr key={i} className="hover:bg-orange-50/30 transition-colors">
+                      <td className="px-6 py-4 text-sm font-black orange-text">{row[2]}</td>
+                      <td className="px-6 py-4 text-sm">{row[5]}</td>
+                      <td className="px-6 py-4 text-sm max-w-xs truncate">{row[6]}</td>
+                      <td className="px-6 py-4 text-sm font-bold">{row[3]}</td>
+                    </tr>
+                  ))}
+                  {(view === 'Submissions' ? data.submissions.length : data.schedules.length) === 0 && (
+                    <tr><td colSpan="4" className="px-6 py-20 text-center text-gray-300 italic">No records found. Submit a form to get started.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const LoginPage = ({ onLogin }) => {
+      const [u, setU] = useState('');
+      const [p, setP] = useState('');
+
+      return (
+        <div className="min-h-screen two-tone-login flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-white rounded-[2rem] shadow-2xl overflow-hidden animate-in">
+            <div className="p-10 text-center bg-gray-50 border-b">
+              <div className="w-24 h-24 orange-bg text-white rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl shadow-orange-200 rotate-6 transform transition-transform hover:rotate-0">
+                <span className="text-4xl font-black">BON</span>
+              </div>
+              <h1 className="text-2xl font-black text-gray-800">NBC PORTAL</h1>
+              <p className="text-gray-400 font-bold text-[10px] uppercase tracking-widest mt-1">Training Coordinator Access</p>
+            </div>
+            <form className="p-10 space-y-6" onSubmit={e => { e.preventDefault(); onLogin(u); }}>
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Username</label>
+                <input required className="w-full border-2 border-gray-100 p-4 rounded-2xl outline-none focus:border-orange-400 transition-all font-medium" type="text" value={u} onChange={e => setU(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Password</label>
+                <input required className="w-full border-2 border-gray-100 p-4 rounded-2xl outline-none focus:border-orange-400 transition-all font-medium" type="password" value={p} onChange={e => setP(e.target.value)} />
+              </div>
+              <button className="w-full py-5 orange-bg text-white font-black rounded-2xl shadow-2xl shadow-orange-100 tracking-widest">LOG IN</button>
+            </form>
+          </div>
+        </div>
+      );
+    };
+
+    // --- MAIN APP COMPONENT ---
+
+    const App = () => {
+      const [user, setUser] = useState(localStorage.getItem('nbc_user'));
+      const [menuOpen, setMenuOpen] = useState(false);
+      const navigate = useNavigate();
+      const location = useLocation();
+
+      if (!user) return <LoginPage onLogin={u => { localStorage.setItem('nbc_user', u); setUser(u); }} />;
+
+      const menuItems = [
+        { name: Category.BranchVisit, icon: 'fa-clipboard-check', path: '/visit', color: 'orange' },
+        { name: Category.EmployeeEvaluation, icon: 'fa-user-check', path: '/eval', color: 'blue' },
+        { name: Category.ReportProblem, icon: 'fa-triangle-exclamation', path: '/problem', color: 'red' },
+        { name: Category.Schedule, icon: 'fa-calendar-days', path: '/schedule', color: 'green' },
+        { name: Category.Dashboard, icon: 'fa-chart-column', path: '/history', color: 'purple' }
+      ];
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          {/* Header */}
+          <header className="bg-white border-b h-20 sticky top-0 z-40 flex items-center justify-between px-6 lg:px-12 shadow-sm">
+            <div className="flex items-center gap-4">
+              <button onClick={() => setMenuOpen(true)} className="p-2 text-gray-400 lg:hidden"><i className="fa-solid fa-bars-staggered text-xl"></i></button>
+              <Link to="/" className="text-2xl font-black tracking-tighter"><span className="orange-text">NBC</span> PORTAL</Link>
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <div className="text-right hidden sm:block leading-none">
+                <p className="font-black text-gray-800 text-sm">{user}</p>
+                <p className="text-[9px] text-gray-400 uppercase font-black">Coordinator</p>
+              </div>
+              <img src={`https://ui-avatars.com/api/?name=${user}&background=FF8C00&color=fff&rounded=true&bold=true`} className="w-11 h-11 border-2 border-orange-100" />
+              <button onClick={() => { localStorage.removeItem('nbc_user'); setUser(null); }} className="text-gray-300 hover:text-red-500 transition-colors ml-2"><i className="fa-solid fa-right-from-bracket"></i></button>
+            </div>
+          </header>
+
+          {/* Sidebar Menu */}
+          {menuOpen && (
+            <div className="fixed inset-0 z-50">
+              <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setMenuOpen(false)}></div>
+              <aside className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-2xl p-8 flex flex-col animate-in">
+                <div className="flex justify-between items-center mb-10">
+                  <span className="font-black text-xl tracking-tighter">NAVIGATE</span>
+                  <button onClick={() => setMenuOpen(false)} className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center"><i className="fa-solid fa-xmark text-gray-400"></i></button>
+                </div>
+                <nav className="space-y-3 flex-1">
+                  {menuItems.map(item => (
+                    <Link key={item.path} to={item.path} onClick={() => setMenuOpen(false)} className="flex items-center gap-4 p-4 rounded-2xl font-black text-sm text-gray-600 hover:bg-orange-50 hover:text-orange-600 transition-all group">
+                      <div className={`w-10 h-10 rounded-xl bg-${item.color}-100 flex items-center justify-center text-${item.color}-600 group-hover:scale-110 transition-transform`}>
+                        <i className={`fa-solid ${item.icon}`}></i>
+                      </div>
+                      {item.name}
+                    </Link>
+                  ))}
+                </nav>
+                <button onClick={() => { localStorage.removeItem('nbc_user'); setUser(null); }} className="p-4 bg-red-50 text-red-500 rounded-2xl font-black text-sm flex items-center justify-center gap-3"><i className="fa-solid fa-power-off"></i> LOG OUT</button>
+              </aside>
+            </div>
+          )}
+
+          <main className="flex-1 overflow-y-auto pb-10">
+            <Routes>
+              <Route path="/" element={
+                <div className="max-w-5xl mx-auto py-12 px-6 animate-in">
+                  <div className="mb-10">
+                    <h2 className="text-3xl font-black text-gray-800">Welcome back, {user}!</h2>
+                    <p className="text-gray-400 font-bold text-sm">Select a category below to start coordination.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {menuItems.map(item => (
+                      <Link key={item.path} to={item.path} className="bg-white p-10 rounded-[2.5rem] shadow-sm hover:shadow-2xl hover:-translate-y-2 border border-gray-100 transition-all group flex flex-col items-center text-center">
+                        <div className={`w-16 h-16 rounded-[1.25rem] bg-${item.color}-100 flex items-center justify-center text-2xl text-${item.color}-600 mb-6 shadow-lg shadow-${item.color}-50 group-hover:rotate-12 transition-transform`}>
+                          <i className={`fa-solid ${item.icon}`}></i>
+                        </div>
+                        <h3 className="text-xl font-black text-gray-800">{item.name}</h3>
+                        <p className="text-[10px] font-bold text-gray-300 uppercase mt-2 tracking-widest">Open Management Tools</p>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              } />
+              <Route path="/visit" element={<GenericForm category={Category.BranchVisit} />} />
+              <Route path="/eval" element={<GenericForm category={Category.EmployeeEvaluation} />} />
+              <Route path="/problem" element={<GenericForm category={Category.ReportProblem} />} />
+              <Route path="/schedule" element={<ScheduleView />} />
+              <Route path="/history" element={<DashboardView />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+
+          <footer className="py-10 bg-white border-t border-gray-50 text-center">
+            <p className="text-xs font-bold text-gray-300 uppercase tracking-[0.2em]">Training-Coordinators | <span className="orange-text">BON Cafe</span></p>
+            <p className="text-[10px] text-gray-300 mt-2">All rights reserved © 2024</p>
+          </footer>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<HashRouter><App /></HashRouter>);
+  </script>
+</body>
+</html>
